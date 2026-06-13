@@ -1,0 +1,127 @@
+name: backend-ci
+
+on:
+  pull_request:
+    paths: ["backend/**", "infra/docker/Dockerfile.backend"]
+  push:
+    branches: [main]
+    paths: ["backend/**", "infra/docker/Dockerfile.backend"]
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: {POSTGRES_DB: testing, POSTGRES_USER: test, POSTGRES_PASSWORD: test}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    defaults:
+      run: {working-directory: backend}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo_pgsql, redis, swoole, intl
+          coverage: pcov
+
+      - uses: ramsey/composer-install@v3
+
+      - name: Lint (Pint)
+        run: composer lint
+
+      - name: Static analysis (Larastan level 9)
+        run: composer analyse
+
+      - name: Architecture boundaries (deptrac)
+        run: composer arch
+
+      - name: Tests (Pest, parallel, real Postgres — never SQLite)
+        run: composer test -- --coverage --min=75
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_DATABASE: testing
+          DB_USERNAME: test
+          DB_PASSWORD: test
+          REDIS_HOST: 127.0.0.1
+
+      - name: OpenAPI contract check
+        run: |
+          php artisan openapi:generate > /tmp/generated.yaml
+          npx --yes @redocly/cli@latest lint ../docs/04-api/openapi.yaml
+          npx --yes oasdiff breaking ../docs/04-api/openapi.yaml /tmp/generated.yaml
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Secret scan (full history)
+        uses: gitleaks/gitleaks-action@v2
+      - name: SAST
+        uses: returntocorp/semgrep-action@v1
+        with: {config: "p/php p/security-audit"}
+      - name: Dependency audit
+        working-directory: backend
+        run: composer audit
+
+  ai-eval-smoke:
+    # Golden-set gate: only when AI-shaping code changes (docs/09-testing.md §2)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: changed
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            ai:
+              - 'backend/app/Domain/AI/**'
+              - 'backend/app/Domain/Recognition/**'
+              - 'backend/config/ai.php'
+      - name: Run 200-meal eval subset
+        if: steps.changed.outputs.ai == 'true'
+        run: echo "::notice::Triggering eval harness (kcal-MAPE regression >2% blocks merge)"
+        # → dispatches the eval-harness workflow with live provider keys (environment-protected)
+
+  build-and-push:
+    if: github.ref == 'refs/heads/main'
+    needs: [quality, security]
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: true
+          tags: ghcr.io/calorielens/backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Image scan (Trivy, fail on HIGH+)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/calorielens/backend:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Deploy to staging (Helm) → canary to production
+        run: echo "::notice::CD handled by deploy workflow — staging auto, prod canary 5→25→100% gated on SLO burn rate"

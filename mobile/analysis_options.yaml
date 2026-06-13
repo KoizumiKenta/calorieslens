@@ -1,0 +1,6 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    # Design references from the architecture docs — not compiled into the app.
+    - reference/**

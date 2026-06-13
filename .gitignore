@@ -1,0 +1,34 @@
+# ── Secrets — never commit ──────────────────────────────────
+**/.env
+*.pem
+*.key
+auth.json
+
+# ── PHP / Laravel ───────────────────────────────────────────
+backend/vendor/
+**/storage/framework/cache/*
+**/storage/framework/sessions/*
+**/storage/framework/views/*
+**/storage/logs/*
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+.phpunit.cache
+.phpunit.result.cache
+
+# ── Flutter / Dart ──────────────────────────────────────────
+mobile/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/ephemeral/
+
+# ── Node ────────────────────────────────────────────────────
+**/node_modules/
+
+# ── OS / editor ─────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.iml

@@ -1,0 +1,612 @@
+openapi: 3.1.0
+info:
+  title: CalorieLens AI API
+  version: 1.0.0
+  description: |
+    REST API for the CalorieLens AI mobile app and integrations.
+    Conventions: JSON:API-lite envelopes `{data, meta}`; errors RFC 9457 problem+json;
+    cursor pagination; idempotency via `Idempotency-Key` header on POSTs;
+    all timestamps ISO-8601 UTC. GraphQL gateway planned — resources are designed
+    as a flat, ID-addressable graph to map 1:1 onto a future schema.
+servers:
+  - url: https://api.calorielens.ai/v1
+security:
+  - bearerAuth: []
+
+tags:
+  - {name: Auth}
+  - {name: Scans, description: "All AI capture modes"}
+  - {name: Foods, description: "Search, barcodes, custom foods"}
+  - {name: Diary}
+  - {name: Tracking, description: "Weight, water, exercise, health sync"}
+  - {name: Coach, description: "Chat + insights"}
+  - {name: Planner}
+  - {name: Profile}
+  - {name: Social}
+
+paths:
+  # ---------- AUTH ----------
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register with email or social identity token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider: {type: string, enum: [email, apple, google]}
+                email: {type: string, format: email}
+                password: {type: string, minLength: 10}
+                id_token: {type: string, description: Social identity token}
+                locale: {type: string, default: en}
+                timezone: {type: string, default: Asia/Kuala_Lumpur}
+      responses:
+        "201": {$ref: "#/components/responses/TokenPair"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Login (rate-limited 5/min/IP, lockout after 10 failures)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider: {type: string, enum: [email, apple, google]}
+                email: {type: string}
+                password: {type: string}
+                id_token: {type: string}
+      responses:
+        "200": {$ref: "#/components/responses/TokenPair"}
+        "401": {$ref: "#/components/responses/Problem"}
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Rotate refresh token (reuse detection revokes the whole family)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties: {refresh_token: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/TokenPair"}
+        "401": {$ref: "#/components/responses/Problem"}
+  /auth/logout:
+    post: {tags: [Auth], summary: Revoke current refresh family, responses: {"204": {description: Logged out}}}
+
+  # ---------- SCANS ----------
+  /scans:
+    post:
+      tags: [Scans]
+      summary: Create a scan and receive signed upload URL(s)
+      description: |
+        One endpoint for every capture mode. Photo-bearing kinds return
+        `upload_urls`; voice returns an audio upload URL; barcode resolves
+        synchronously when the product is cached.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [photo, multi_angle, video, barcode, label_ocr, voice, receipt, menu, pantry, after_photo]
+                media_count: {type: integer, minimum: 1, maximum: 8, default: 1}
+                barcode: {type: string, description: "For kind=barcode"}
+                parent_scan_id: {type: string, format: uuid, description: "For kind=after_photo"}
+                has_depth_map: {type: boolean, default: false}
+                menu_url: {type: string, format: uri, description: "For kind=menu via URL"}
+                meta: {type: object, additionalProperties: true}
+      responses:
+        "201":
+          description: Scan created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      scan_id: {type: string, format: uuid}
+                      status: {type: string, enum: [pending, ready]}
+                      upload_urls: {type: array, items: {type: string, format: uri}}
+                      depth_upload_url: {type: string, format: uri}
+                      result: {$ref: "#/components/schemas/ScanResult", description: "Present when resolved synchronously (cached barcode)"}
+        "402": {description: AI quota exhausted for tier, content: {application/problem+json: {schema: {$ref: "#/components/schemas/ProblemDetails"}}}}
+        "429": {$ref: "#/components/responses/RateLimited"}
+  /scans/{scanId}/complete-upload:
+    post:
+      tags: [Scans]
+      summary: Signal uploads finished; enqueues AI processing
+      parameters: [{$ref: "#/components/parameters/scanId"}]
+      responses:
+        "202": {description: Processing started}
+  /scans/{scanId}:
+    get:
+      tags: [Scans]
+      summary: Poll scan status/result (WebSocket `scan.ready` is the primary channel)
+      parameters: [{$ref: "#/components/parameters/scanId"}]
+      responses:
+        "200":
+          description: Scan with result when ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      scan_id: {type: string, format: uuid}
+                      status: {type: string, enum: [pending, uploading, processing, ready, failed]}
+                      result: {$ref: "#/components/schemas/ScanResult"}
+  /scans/{scanId}/items/{itemId}:
+    patch:
+      tags: [Scans]
+      summary: Correct a detected item before logging (feeds personalization)
+      parameters:
+        - {$ref: "#/components/parameters/scanId"}
+        - {name: itemId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                food_item_id: {type: string, format: uuid}
+                display_name: {type: string}
+                grams: {type: number}
+                quantity: {type: number}
+                serving_label: {type: string}
+                cooking_method: {type: string, enum: [raw, boiled, steamed, grilled, baked, stir_fried, deep_fried]}
+                removed: {type: boolean}
+      responses:
+        "200": {description: Item recomputed, content: {application/json: {schema: {$ref: "#/components/schemas/ScanResultItem"}}}}
+  /scans/{scanId}/items:
+    post:
+      tags: [Scans]
+      summary: Add a missing food to a scan result
+      parameters: [{$ref: "#/components/parameters/scanId"}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [display_name]
+              properties:
+                food_item_id: {type: string, format: uuid}
+                display_name: {type: string}
+                grams: {type: number}
+      responses:
+        "201": {description: Item added, content: {application/json: {schema: {$ref: "#/components/schemas/ScanResultItem"}}}}
+  /scans/{scanId}/log:
+    post:
+      tags: [Scans]
+      summary: Log the (possibly corrected) scan into the diary in one call
+      parameters: [{$ref: "#/components/parameters/scanId"}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [meal_slot, entry_date]
+              properties:
+                meal_slot: {type: string, enum: [breakfast, lunch, dinner, snack]}
+                entry_date: {type: string, format: date}
+      responses:
+        "201": {description: Diary entries created, content: {application/json: {schema: {type: object, properties: {data: {type: array, items: {$ref: "#/components/schemas/DiaryEntry"}}}}}}}
+
+  # ---------- FOODS ----------
+  /foods/search:
+    get:
+      tags: [Foods]
+      summary: Typo-tolerant autocomplete (verified + regional boosted, personal frequency aware)
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string, minLength: 1}}
+        - {name: locale, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, default: 20, maximum: 50}}
+      responses:
+        "200": {description: Ranked results, content: {application/json: {schema: {type: object, properties: {data: {type: array, items: {$ref: "#/components/schemas/FoodSummary"}}}}}}}
+  /foods/{foodId}:
+    get:
+      tags: [Foods]
+      summary: Full food detail with portions, nutrients, components
+      parameters: [{name: foodId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        "200": {description: Food, content: {application/json: {schema: {$ref: "#/components/schemas/FoodDetail"}}}}
+  /foods/barcode/{code}:
+    get:
+      tags: [Foods]
+      summary: Lookup by barcode (cache → internal → provider chain)
+      parameters: [{name: code, in: path, required: true, schema: {type: string}}]
+      responses:
+        "200": {description: Product found, content: {application/json: {schema: {$ref: "#/components/schemas/FoodDetail"}}}}
+        "404": {description: Unknown — client should offer label-OCR submission flow}
+  /foods/custom:
+    post:
+      tags: [Foods]
+      summary: Create a private custom food (e.g. from label OCR)
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CustomFoodInput"}
+      responses:
+        "201": {description: Created, content: {application/json: {schema: {$ref: "#/components/schemas/FoodDetail"}}}}
+  /foods/submissions:
+    post:
+      tags: [Foods]
+      summary: Submit unknown barcode/food to community moderation queue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, payload]
+              properties:
+                kind: {type: string, enum: [barcode, food, correction]}
+                barcode: {type: string}
+                payload: {type: object}
+                media_keys: {type: array, items: {type: string}}
+      responses:
+        "202": {description: Queued for moderation}
+
+  # ---------- DIARY ----------
+  /diary:
+    get:
+      tags: [Diary]
+      summary: Diary for a date (slots, totals, targets, water, exercise)
+      parameters: [{name: date, in: query, required: true, schema: {type: string, format: date}}]
+      responses:
+        "200": {description: Day view, content: {application/json: {schema: {$ref: "#/components/schemas/DiaryDay"}}}}
+  /diary/entries:
+    post:
+      tags: [Diary]
+      summary: Log one or more entries (batch; offline-sync safe via client_uuid)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries: {type: array, maxItems: 50, items: {$ref: "#/components/schemas/DiaryEntryInput"}}
+      responses:
+        "201": {description: Created (existing client_uuids returned, not duplicated), content: {application/json: {schema: {type: object, properties: {data: {type: array, items: {$ref: "#/components/schemas/DiaryEntry"}}}}}}}
+  /diary/entries/{entryId}:
+    patch:
+      tags: [Diary]
+      summary: Edit an entry
+      parameters: [{$ref: "#/components/parameters/entryId"}]
+      requestBody: {content: {application/json: {schema: {$ref: "#/components/schemas/DiaryEntryInput"}}}}
+      responses: {"200": {description: Updated}}
+    delete:
+      tags: [Diary]
+      summary: Soft-delete (undo window 30 s client-side)
+      parameters: [{$ref: "#/components/parameters/entryId"}]
+      responses: {"204": {description: Deleted}}
+  /favorites:
+    get: {tags: [Diary], summary: List favorites, responses: {"200": {description: OK}}}
+    post: {tags: [Diary], summary: Save favorite from entry/scan, responses: {"201": {description: Created}}}
+  /templates:
+    get: {tags: [Diary], summary: List meal templates, responses: {"200": {description: OK}}}
+    post: {tags: [Diary], summary: Create template, responses: {"201": {description: Created}}}
+  /templates/{templateId}/log:
+    post:
+      tags: [Diary]
+      summary: One-tap log an entire template
+      parameters: [{name: templateId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object, required: [meal_slot, entry_date], properties: {meal_slot: {type: string}, entry_date: {type: string, format: date}}}
+      responses: {"201": {description: Entries created}}
+
+  # ---------- TRACKING ----------
+  /weights:
+    get:
+      tags: [Tracking]
+      summary: Weight history with rolling averages and projection
+      parameters:
+        - {name: from, in: query, schema: {type: string, format: date}}
+        - {name: to, in: query, schema: {type: string, format: date}}
+      responses:
+        "200": {description: Series + trend + projection band, content: {application/json: {schema: {$ref: "#/components/schemas/WeightSeries"}}}}
+    post:
+      tags: [Tracking]
+      summary: Log weight
+      requestBody: {content: {application/json: {schema: {type: object, required: [weight_kg, logged_on], properties: {weight_kg: {type: number}, logged_on: {type: string, format: date}}}}}}
+      responses: {"201": {description: Logged}}
+  /water:
+    post:
+      tags: [Tracking]
+      summary: Log water
+      requestBody: {content: {application/json: {schema: {type: object, required: [ml], properties: {ml: {type: integer}, entry_date: {type: string, format: date}}}}}}
+      responses: {"201": {description: Logged}}
+  /exercises:
+    post:
+      tags: [Tracking]
+      summary: Log exercise (MET-based burn computed server-side if kcal omitted)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [activity, duration_min, entry_date]
+              properties:
+                activity: {type: string, enum: [walking, running, cycling, swimming, weights, hiit, yoga, other]}
+                duration_min: {type: integer}
+                intensity: {type: string, enum: [low, moderate, high]}
+                kcal_burned: {type: number}
+                entry_date: {type: string, format: date}
+      responses: {"201": {description: Logged}}
+  /health/sync:
+    post:
+      tags: [Tracking]
+      summary: Idempotent wearable batch import (HealthKit/Health Connect bridge)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, batches]
+              properties:
+                provider: {type: string, enum: [healthkit, health_connect, garmin, fitbit]}
+                batches:
+                  type: array
+                  items:
+                    type: object
+                    required: [metric, period_start, period_end, payload]
+                    properties:
+                      metric: {type: string, enum: [steps, active_kcal, heart_rate, sleep, workout]}
+                      period_start: {type: string, format: date-time}
+                      period_end: {type: string, format: date-time}
+                      payload: {type: object}
+      responses: {"202": {description: Accepted (duplicates ignored)}}
+  /dashboard:
+    get:
+      tags: [Tracking]
+      summary: Daily dashboard aggregates (consumed/remaining, macros, water, exercise, weight trend, weekly avg)
+      parameters: [{name: date, in: query, schema: {type: string, format: date}}]
+      responses: {"200": {description: Dashboard, content: {application/json: {schema: {$ref: "#/components/schemas/Dashboard"}}}}}
+
+  # ---------- COACH ----------
+  /coach/messages:
+    post:
+      tags: [Coach]
+      summary: Send a message to the AI coach (SSE streamed response)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                conversation_id: {type: string, format: uuid}
+                content: {type: string, maxLength: 2000}
+      responses:
+        "200":
+          description: Server-sent event stream of tokens, then a final grounded message object
+          content: {text/event-stream: {schema: {type: string}}}
+  /coach/insights:
+    get:
+      tags: [Coach]
+      summary: Today's proactive insights
+      responses: {"200": {description: Insights, content: {application/json: {schema: {type: object, properties: {data: {type: array, items: {$ref: "#/components/schemas/Insight"}}}}}}}}
+
+  # ---------- PLANNER ----------
+  /planner/plans:
+    post:
+      tags: [Planner]
+      summary: Generate weekly meal plan + grocery list (async, premium)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                budget: {type: number, description: Weekly budget in user currency}
+                cuisines: {type: array, items: {type: string}}
+                max_cook_minutes: {type: integer}
+                kcal_target: {type: integer}
+                protein_target_g: {type: integer}
+      responses: {"202": {description: Generation queued; result via WebSocket/poll}}
+
+  # ---------- PROFILE ----------
+  /me:
+    get: {tags: [Profile], summary: Current user + profile + targets + subscription, responses: {"200": {description: OK, content: {application/json: {schema: {$ref: "#/components/schemas/Me"}}}}}}
+    patch: {tags: [Profile], summary: Update profile (server recomputes targets), responses: {"200": {description: Updated}}}
+  /me/export:
+    post: {tags: [Profile], summary: "Request full data export (GDPR/PDPA), emailed link", responses: {"202": {description: Queued}}}
+  /me/delete:
+    post: {tags: [Profile], summary: "Request account deletion (30-day grace)", responses: {"202": {description: Scheduled}}}
+
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    scanId: {name: scanId, in: path, required: true, schema: {type: string, format: uuid}}
+    entryId: {name: entryId, in: path, required: true, schema: {type: string, format: uuid}}
+  responses:
+    TokenPair:
+      description: Access + refresh tokens
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              access_token: {type: string, description: "JWT, 15 min TTL"}
+              refresh_token: {type: string, description: "Opaque, 30 d TTL, single-use rotating"}
+              expires_in: {type: integer, example: 900}
+    Problem:
+      description: RFC 9457 problem
+      content: {application/problem+json: {schema: {$ref: "#/components/schemas/ProblemDetails"}}}
+    ValidationError:
+      description: Validation failure
+      content: {application/problem+json: {schema: {$ref: "#/components/schemas/ProblemDetails"}}}
+    RateLimited:
+      description: Too many requests (Retry-After header set)
+      content: {application/problem+json: {schema: {$ref: "#/components/schemas/ProblemDetails"}}}
+  schemas:
+    ProblemDetails:
+      type: object
+      properties:
+        type: {type: string}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        errors: {type: object, additionalProperties: {type: array, items: {type: string}}}
+    Nutrition:
+      type: object
+      properties:
+        kcal: {type: number}
+        protein_g: {type: number}
+        carbs_g: {type: number}
+        fat_g: {type: number}
+        fiber_g: {type: number}
+        sugar_g: {type: number}
+        sodium_mg: {type: number}
+    ScanResultItem:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        detected_label: {type: string, example: Chicken Breast}
+        food_item_id: {type: string, format: uuid}
+        component_of: {type: string, format: uuid, description: Parent item for composite dishes}
+        grams: {type: number, example: 150}
+        grams_range: {type: array, items: {type: number}, example: [130, 175]}
+        serving_label: {type: string, example: "1 piece"}
+        cooking_method: {type: string, example: grilled}
+        nutrition: {$ref: "#/components/schemas/Nutrition"}
+        confidence: {type: number, example: 0.96}
+        portion_confidence: {type: number, example: 0.84}
+        reasoning: {type: string, example: "Grilled chicken breast identified by char marks and fiber texture; ~150 g vs the fork beside it."}
+        bbox: {type: array, items: {type: number}, description: "Normalized [x,y,w,h]"}
+    ScanResult:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        items: {type: array, items: {$ref: "#/components/schemas/ScanResultItem"}}
+        total: {$ref: "#/components/schemas/Nutrition"}
+        kcal_range: {type: array, items: {type: number}, example: [580, 670]}
+        confidence: {type: number, example: 0.89}
+        reasoning: {type: string}
+    FoodSummary:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        brand: {type: string}
+        verification: {type: string, enum: [verified, community, unverified]}
+        locale_origin: {type: string}
+        default_portion: {type: string, example: "1 bowl (240 g)"}
+        kcal_per_portion: {type: number}
+    FoodDetail:
+      allOf:
+        - {$ref: "#/components/schemas/FoodSummary"}
+        - type: object
+          properties:
+            nutrition_per_100g: {$ref: "#/components/schemas/Nutrition"}
+            portions: {type: array, items: {type: object, properties: {label: {type: string}, grams: {type: number}}}}
+            components: {type: array, items: {$ref: "#/components/schemas/FoodSummary"}}
+            ingredients: {type: string}
+            allergens: {type: array, items: {type: string}}
+            diet_flags: {type: array, items: {type: string}}
+    CustomFoodInput:
+      type: object
+      required: [name, nutrition_per_100g]
+      properties:
+        name: {type: string}
+        brand: {type: string}
+        serving_grams: {type: number}
+        nutrition_per_100g: {$ref: "#/components/schemas/Nutrition"}
+        ingredients: {type: string}
+        from_scan_id: {type: string, format: uuid, description: Label-OCR provenance}
+    DiaryEntryInput:
+      type: object
+      required: [client_uuid, entry_date, meal_slot, display_name, kcal]
+      properties:
+        client_uuid: {type: string, format: uuid}
+        entry_date: {type: string, format: date}
+        meal_slot: {type: string, enum: [breakfast, lunch, dinner, snack]}
+        food_item_id: {type: string, format: uuid}
+        display_name: {type: string}
+        grams: {type: number}
+        quantity: {type: number, default: 1}
+        kcal: {type: number}
+        protein_g: {type: number}
+        carbs_g: {type: number}
+        fat_g: {type: number}
+        fiber_g: {type: number}
+        sugar_g: {type: number}
+        sodium_mg: {type: number}
+        source: {type: string, enum: [manual, photo, barcode, label, voice, favorite, template, receipt, coach]}
+    DiaryEntry:
+      allOf:
+        - {$ref: "#/components/schemas/DiaryEntryInput"}
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            logged_at: {type: string, format: date-time}
+    DiaryDay:
+      type: object
+      properties:
+        date: {type: string, format: date}
+        slots:
+          type: object
+          additionalProperties: {type: array, items: {$ref: "#/components/schemas/DiaryEntry"}}
+        totals: {$ref: "#/components/schemas/Nutrition"}
+        targets: {$ref: "#/components/schemas/Nutrition"}
+        water_ml: {type: integer}
+        exercise_kcal: {type: number}
+    WeightSeries:
+      type: object
+      properties:
+        points: {type: array, items: {type: object, properties: {date: {type: string, format: date}, kg: {type: number}}}}
+        rolling_7d: {type: array, items: {type: object}}
+        projection:
+          type: object
+          description: Honest band, not a single line
+          properties:
+            weeks: {type: integer}
+            expected_kg: {type: array, items: {type: number}}
+            band_low: {type: array, items: {type: number}}
+            band_high: {type: array, items: {type: number}}
+    Dashboard:
+      type: object
+      properties:
+        kcal_consumed: {type: number}
+        kcal_remaining: {type: number}
+        macros: {$ref: "#/components/schemas/Nutrition"}
+        water_ml: {type: integer}
+        exercise_kcal: {type: number}
+        weight_trend_kg_per_week: {type: number}
+        weekly_avg_kcal: {type: number}
+        streak: {type: integer}
+    Insight:
+      type: object
+      properties:
+        kind: {type: string, example: low_protein}
+        message: {type: string, example: "You're 42 g short on protein today — a grilled chicken thigh at dinner closes the gap."}
+        cta: {type: object}
+    Me:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        email: {type: string}
+        profile: {type: object}
+        targets: {$ref: "#/components/schemas/Nutrition"}
+        subscription: {type: object, properties: {tier: {type: string, enum: [free, premium, family, enterprise]}}}
+        stats: {type: object, properties: {xp: {type: integer}, level: {type: integer}, current_streak: {type: integer}}}

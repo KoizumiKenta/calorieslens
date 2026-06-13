@@ -1,0 +1,30 @@
+# CalorieLens backend — one image, three roles (api / worker / scheduler)
+# selected by command override in k8s. Multi-stage, non-root, ~140 MB.
+
+FROM composer:2 AS vendor
+WORKDIR /app
+COPY backend/composer.json backend/composer.lock ./
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
+COPY backend/ .
+RUN composer dump-autoload --optimize --classmap-authoritative
+
+FROM php:8.4-cli-alpine AS runtime
+RUN apk add --no-cache libpq vips icu-libs \
+    && apk add --no-cache --virtual .build postgresql-dev vips-dev icu-dev linux-headers $PHPIZE_DEPS \
+    && docker-php-ext-install pdo_pgsql pcntl intl opcache \
+    && pecl install swoole redis vips && docker-php-ext-enable swoole redis vips \
+    && apk del .build
+
+COPY infra/docker/php.ini /usr/local/etc/php/conf.d/app.ini
+
+RUN addgroup -g 1000 app && adduser -G app -u 1000 -D app
+WORKDIR /var/www
+COPY --from=vendor --chown=app:app /app .
+
+USER app
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=3s CMD php artisan octane:status || exit 1
+
+# api (default). worker: php artisan horizon. scheduler: php artisan schedule:work
+CMD ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=8000"]

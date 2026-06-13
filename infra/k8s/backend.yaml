@@ -1,0 +1,156 @@
+# Core backend workloads. One image, role via command override.
+# HPA for api; KEDA ScaledObjects for queue workers (queue depth, not CPU).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: calorielens
+spec:
+  replicas: 3
+  selector: {matchLabels: {app: api}}
+  template:
+    metadata:
+      labels: {app: api}
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: {matchLabels: {app: api}}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: ghcr.io/calorielens/backend@sha256:REPLACED_BY_CD  # digest-pinned by pipeline
+          ports: [{containerPort: 8000}]
+          envFrom:
+            - configMapRef: {name: backend-config}
+            - secretRef: {name: backend-secrets}    # via External Secrets Operator
+          resources:
+            requests: {cpu: 500m, memory: 512Mi}
+            limits: {memory: 1Gi}
+          readinessProbe:
+            httpGet: {path: /up, port: 8000}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /up, port: 8000}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: storage, mountPath: /var/www/storage/framework}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: storage, emptyDir: {}}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: calorielens
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: api}
+  minReplicas: 3
+  maxReplicas: 40
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 60}}
+    - type: Pods
+      pods:
+        metric: {name: http_request_p95_seconds}
+        target: {type: AverageValue, averageValue: "1"}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  namespace: calorielens
+spec:
+  minAvailable: 2
+  selector: {matchLabels: {app: api}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-ai-vision
+  namespace: calorielens
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: worker-ai-vision}}
+  template:
+    metadata:
+      labels: {app: worker-ai-vision}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, seccompProfile: {type: RuntimeDefault}}
+      terminationGracePeriodSeconds: 90   # let in-flight vision jobs finish
+      containers:
+        - name: worker
+          image: ghcr.io/calorielens/backend@sha256:REPLACED_BY_CD
+          command: ["php", "artisan", "queue:work", "redis", "--queue=ai-vision", "--max-time=3600", "--timeout=60"]
+          envFrom:
+            - configMapRef: {name: backend-config}
+            - secretRef: {name: backend-secrets}
+          resources:
+            requests: {cpu: 250m, memory: 768Mi}   # image re-encode is memory-bound
+            limits: {memory: 1536Mi}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-ai-vision
+  namespace: calorielens
+spec:
+  scaleTargetRef: {name: worker-ai-vision}
+  minReplicaCount: 2
+  maxReplicaCount: 60   # ceiling = provider rate limits, not cluster capacity
+  cooldownPeriod: 120
+  triggers:
+    - type: redis
+      metadata:
+        addressFromEnv: REDIS_ADDR
+        listName: "queues:ai-vision"
+        listLength: "5"   # target jobs per replica
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler
+  namespace: calorielens
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # never two schedulers
+  selector: {matchLabels: {app: scheduler}}
+  template:
+    metadata:
+      labels: {app: scheduler}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: scheduler
+          image: ghcr.io/calorielens/backend@sha256:REPLACED_BY_CD
+          command: ["php", "artisan", "schedule:work"]
+          envFrom:
+            - configMapRef: {name: backend-config}
+            - secretRef: {name: backend-secrets}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: calorielens
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  # Explicit allows defined per-service in ingress-allow.yaml (api ← ingress-nginx,
+  # all pods ← prometheus scrape). Egress restricted to DNS, Postgres, Redis,
+  # S3, and the AI/nutrition provider CIDRs via egress-policy.yaml.
