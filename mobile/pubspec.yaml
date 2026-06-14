@@ -28,6 +28,33 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.1
 
 flutter:
   uses-material-design: true
+
+# Launcher icon — green brand fill, viewfinder + cutlery glyph. Android uses an
+# adaptive icon (green background + transparent foreground); web/others use the
+# full square. Regenerate: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "assets/branding/icon_full.png"
+  android: true
+  adaptive_icon_background: "#2E7D4F"
+  adaptive_icon_foreground: "assets/branding/icon_foreground.png"
+  web:
+    generate: true
+    image_path: "assets/branding/icon_full.png"
+    background_color: "#2E7D4F"
+    theme_color: "#2E7D4F"
+
+# Native splash — green background, white logo centered. Regenerate:
+# dart run flutter_native_splash:create
+flutter_native_splash:
+  color: "#2E7D4F"
+  image: "assets/branding/splash_logo.png"
+  android: true
+  web: false
+  android_12:
+    color: "#2E7D4F"
+    image: "assets/branding/splash_logo.png"

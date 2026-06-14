@@ -25,6 +25,7 @@ class TodayScreen extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
 
     final remaining = profile.kcalTarget - totals.kcal;
+    final streak = ref.watch(streakProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -40,6 +41,13 @@ class TodayScreen extends ConsumerWidget {
           ],
         ),
         toolbarHeight: 72,
+        actions: [
+          if (streak > 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: _StreakChip(days: streak),
+            ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
@@ -53,16 +61,26 @@ class TodayScreen extends ConsumerWidget {
                   SizedBox(
                     width: 140,
                     height: 140,
-                    child: CustomPaint(
-                      painter: _RingPainter(
-                        progress: profile.kcalTarget <= 0
-                            ? 0
-                            : (totals.kcal / profile.kcalTarget).clamp(0.0, 1.0),
-                        over: totals.kcal > profile.kcalTarget,
-                        trackColor: scheme.surfaceContainerHighest,
-                        ringColor: totals.kcal > profile.kcalTarget
-                            ? scheme.error
-                            : scheme.primary,
+                    child: TweenAnimationBuilder<double>(
+                      duration: const Duration(milliseconds: 700),
+                      curve: Curves.easeOutCubic,
+                      tween: Tween(
+                        begin: 0.0,
+                        end: profile.kcalTarget <= 0
+                            ? 0.0
+                            : (totals.kcal / profile.kcalTarget)
+                                .clamp(0.0, 1.0),
+                      ),
+                      builder: (context, animatedProgress, child) => CustomPaint(
+                        painter: _RingPainter(
+                          progress: animatedProgress,
+                          over: totals.kcal > profile.kcalTarget,
+                          trackColor: scheme.surfaceContainerHighest,
+                          ringColor: totals.kcal > profile.kcalTarget
+                              ? scheme.error
+                              : scheme.primary,
+                        ),
+                        child: child,
                       ),
                       child: Center(
                         child: Column(
@@ -257,12 +275,18 @@ class TodayScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 2),
-          LinearProgressIndicator(
-            value: progress,
-            color: color,
-            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-            minHeight: 6,
-            borderRadius: BorderRadius.circular(3),
+          TweenAnimationBuilder<double>(
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.easeOutCubic,
+            tween: Tween(begin: 0.0, end: progress),
+            builder: (context, v, _) => LinearProgressIndicator(
+              value: v,
+              color: color,
+              backgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+              minHeight: 6,
+              borderRadius: BorderRadius.circular(3),
+            ),
           ),
         ],
       ),
@@ -355,17 +379,28 @@ class _WaterCard extends ConsumerWidget {
               spacing: 6,
               runSpacing: 6,
               children: [
+                // Custom chip so one InkWell owns BOTH tap (log) and
+                // long-press (remove) — ActionChip swallows the long-press.
                 for (var i = 0; i < vessels.length; i++)
-                  GestureDetector(
-                    onLongPress: () =>
-                        _confirmRemoveVessel(context, ref, i, vessels[i]),
-                    child: Tooltip(
-                      message:
-                          '${vessels[i].label} · long-press to remove',
-                      child: ActionChip(
-                        avatar: Text(vessels[i].emoji),
-                        label: Text('+${vessels[i].ml}'),
-                        onPressed: () => onAdjust(vessels[i].ml),
+                  Material(
+                    color: scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(20),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => onAdjust(vessels[i].ml),
+                      onLongPress: () =>
+                          _confirmRemoveVessel(context, ref, i, vessels[i]),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(vessels[i].emoji),
+                            const SizedBox(width: 6),
+                            Text('+${vessels[i].ml}'),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -376,6 +411,10 @@ class _WaterCard extends ConsumerWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 4),
+            Text('Tap to log · hold a vessel to remove',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant)),
             const SizedBox(height: 10),
             LinearProgressIndicator(
               value: progress,
@@ -506,6 +545,48 @@ class _WaterCard extends ConsumerWidget {
             child: const Text('Got it'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Daily logging streak — the cheap retention loop. Pops in with a quick
+/// scale so hitting a new day's first log feels rewarding.
+class _StreakChip extends StatelessWidget {
+  const _StreakChip({required this.days});
+
+  final int days;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(days),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.elasticOut,
+      tween: Tween(begin: 0.7, end: 1.0),
+      builder: (context, scale, child) =>
+          Transform.scale(scale: scale, child: child),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: scheme.tertiaryContainer,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('🔥', style: TextStyle(fontSize: 14)),
+            const SizedBox(width: 4),
+            Text(
+              '$days',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                color: scheme.onTertiaryContainer,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

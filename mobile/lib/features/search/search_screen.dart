@@ -9,6 +9,7 @@ import '../../core/data/repositories.dart';
 import '../../core/models/diary_entry.dart';
 import '../../core/models/food.dart';
 import '../../core/state/providers.dart';
+import '../../core/widgets/precise_field.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key, this.initialMeal});
@@ -341,24 +342,21 @@ class _LogFoodSheetState extends ConsumerState<_LogFoodSheet> {
               const SizedBox(height: 12),
             ],
 
-            Row(
-              children: [
-                Text('Amount', style: theme.textTheme.titleSmall),
-                Expanded(
-                  child: Slider(
-                    value: _multiplier,
-                    min: 0.25,
-                    max: 3.0,
-                    divisions: 11,
-                    label: '${_fmtMultiplier(_multiplier)}×',
-                    onChanged: (v) => setState(() => _multiplier = v),
-                  ),
-                ),
-                Text('${_grams.round()} g',
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700)),
-              ],
-            ),
+            Builder(builder: (context) {
+              final base = widget.food.portions.isEmpty
+                  ? 100.0
+                  : widget.food.portions[_portionIndex].grams;
+              return PreciseField(
+                label: 'Amount',
+                value: _grams,
+                min: (base * 0.25).clamp(5, 1500).toDouble(),
+                max: (base * 3).clamp(50, 3000).toDouble(),
+                step: 5,
+                unit: 'g',
+                onChanged: (v) =>
+                    setState(() => _multiplier = base <= 0 ? 1.0 : v / base),
+              );
+            }),
 
             Center(
               child: Text(

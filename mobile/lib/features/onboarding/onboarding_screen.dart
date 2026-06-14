@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/models/user_profile.dart';
 import '../../core/state/providers.dart';
+import '../../core/widgets/precise_field.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -153,41 +154,31 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             onSelectionChanged: (s) => setState(() => _sex = s.first),
           ),
           const SizedBox(height: 24),
-          _sliderRow('Age', _age, 14, 90, '${_age.round()} years',
-              (v) => setState(() => _age = v)),
-          _sliderRow('Height', _heightCm, 130, 210, '${_heightCm.round()} cm',
-              (v) => setState(() => _heightCm = v)),
-          _sliderRow('Weight', _weightKg, 35, 180,
-              '${_weightKg.toStringAsFixed(1)} kg',
-              (v) => setState(() => _weightKg = v)),
-        ],
-      ),
-    );
-  }
-
-  Widget _sliderRow(String label, double value, double min, double max,
-      String display, ValueChanged<double> onChanged) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(label, style: Theme.of(context).textTheme.titleMedium),
-              Text(display,
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700)),
-            ],
+          PreciseField(
+            label: 'Age',
+            value: _age,
+            min: 14,
+            max: 90,
+            unit: 'years',
+            onChanged: (v) => setState(() => _age = v),
           ),
-          Slider(
-            value: value,
-            min: min,
-            max: max,
-            onChanged: onChanged,
+          PreciseField(
+            label: 'Height',
+            value: _heightCm,
+            min: 130,
+            max: 210,
+            unit: 'cm',
+            onChanged: (v) => setState(() => _heightCm = v),
+          ),
+          PreciseField(
+            label: 'Weight',
+            value: _weightKg,
+            min: 35,
+            max: 180,
+            step: 0.1,
+            decimals: 1,
+            unit: 'kg',
+            onChanged: (v) => setState(() => _weightKg = v),
           ),
         ],
       ),

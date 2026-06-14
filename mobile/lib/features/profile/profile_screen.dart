@@ -7,6 +7,7 @@ import '../../core/auth/auth_controller.dart';
 import '../../core/models/user_profile.dart';
 import '../../core/state/providers.dart';
 import '../../core/sync/sync_engine.dart';
+import '../../core/widgets/precise_field.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -180,22 +181,15 @@ class ProfileScreen extends ConsumerWidget {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Log weight'),
         content: StatefulBuilder(
-          builder: (context, setState) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('${value.toStringAsFixed(1)} kg',
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineMedium
-                      ?.copyWith(fontWeight: FontWeight.w800)),
-              Slider(
-                value: value,
-                min: 35,
-                max: 180,
-                onChanged: (v) =>
-                    setState(() => value = (v * 10).round() / 10),
-              ),
-            ],
+          builder: (context, setState) => PreciseField(
+            label: 'Weight',
+            value: value,
+            min: 35,
+            max: 180,
+            step: 0.1,
+            decimals: 1,
+            unit: 'kg',
+            onChanged: (v) => setState(() => value = v),
           ),
         ),
         actions: [

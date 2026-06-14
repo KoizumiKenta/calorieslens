@@ -89,6 +89,31 @@ final dayTotalsProvider = Provider.family<NutritionFacts, String>((ref, dateKey)
   return entries.fold(NutritionFacts.zero, (sum, e) => sum + e.nutrition);
 });
 
+/// Consecutive-day logging streak ending today (or yesterday, so the streak
+/// isn't shown as broken before today's first log). 0 means no active streak.
+/// Watches today's diary so it recomputes the moment a meal is logged.
+final streakProvider = Provider<int>((ref) {
+  final today = DateTime.now();
+  ref.watch(diaryProvider(dateKeyOf(today))); // recompute on today's edits
+  final logged = ref.read(diaryRepoProvider).loggedDateKeys();
+  if (logged.isEmpty) return 0;
+
+  // Anchor on today if logged, else yesterday — a fresh day shouldn't read 0
+  // until you've eaten.
+  var cursor = DateTime(today.year, today.month, today.day);
+  if (!logged.contains(dateKeyOf(cursor))) {
+    cursor = cursor.subtract(const Duration(days: 1));
+    if (!logged.contains(dateKeyOf(cursor))) return 0;
+  }
+
+  var streak = 0;
+  while (logged.contains(dateKeyOf(cursor))) {
+    streak++;
+    cursor = cursor.subtract(const Duration(days: 1));
+  }
+  return streak;
+});
+
 // ── Water ────────────────────────────────────────────────────────────
 class WaterNotifier extends FamilyNotifier<int, String> {
   @override

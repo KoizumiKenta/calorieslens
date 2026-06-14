@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/models/diary_entry.dart';
 import '../../core/models/scan.dart';
+import '../../core/widgets/precise_field.dart';
 import 'scan_controller.dart';
 
 /// Review screen — the honest-numbers UX. Every detected item shows its
@@ -400,11 +401,21 @@ class _PortionSheetState extends ConsumerState<_PortionSheet> {
                     ?.copyWith(fontWeight: FontWeight.w800),
               ),
             ),
-            Slider(
-              value: _grams.clamp(5, max),
-              min: 5,
-              max: max,
-              onChanged: _fixing ? null : (v) => setState(() => _grams = v),
+            const SizedBox(height: 4),
+            IgnorePointer(
+              ignoring: _fixing,
+              child: Opacity(
+                opacity: _fixing ? 0.5 : 1,
+                child: PreciseField(
+                  label: 'Portion',
+                  value: _grams.clamp(5, max),
+                  min: 5,
+                  max: max,
+                  step: 5,
+                  unit: 'g',
+                  onChanged: (v) => setState(() => _grams = v),
+                ),
+              ),
             ),
             const SizedBox(height: 8),
             SizedBox(

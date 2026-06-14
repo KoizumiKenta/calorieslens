@@ -3,6 +3,8 @@
 *.pem
 *.key
 auth.json
+mobile/env/*.json
+!mobile/env/*.example.json
 
 # ── PHP / Laravel ───────────────────────────────────────────
 backend/vendor/

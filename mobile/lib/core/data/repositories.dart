@@ -89,6 +89,19 @@ class DiaryRepository {
     return out;
   }
 
+  /// Date keys (yyyy-MM-dd) that have at least one entry — for streak math.
+  Set<String> loggedDateKeys() {
+    final out = <String>{};
+    for (final key in _prefs.getKeys()) {
+      if (key.startsWith(_entriesPrefix)) {
+        if (entriesFor(key.substring(_entriesPrefix.length)).isNotEmpty) {
+          out.add(key.substring(_entriesPrefix.length));
+        }
+      }
+    }
+    return out;
+  }
+
   /// All water tallies as (dateKey, ml), for pushing the full set.
   List<(String, int)> allWater() {
     final out = <(String, int)>[];

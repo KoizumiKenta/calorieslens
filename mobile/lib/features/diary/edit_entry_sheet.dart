@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/diary_entry.dart';
 import '../../core/state/providers.dart';
+import '../../core/widgets/precise_field.dart';
 
 /// Edit a logged diary entry: portion, meal, or delete. Nutrition rescales
 /// from the entry's own snapshot (per-100g recovered), so history stays
@@ -112,10 +113,14 @@ class _EditEntrySheetState extends ConsumerState<EditEntrySheet> {
                 style: theme.textTheme.bodySmall,
               ),
             ),
-            Slider(
+            const SizedBox(height: 4),
+            PreciseField(
+              label: 'Portion',
               value: _grams.clamp(5, max),
               min: 5,
               max: max,
+              step: 5,
+              unit: 'g',
               onChanged: (v) => setState(() => _grams = v),
             ),
 
