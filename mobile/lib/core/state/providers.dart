@@ -130,6 +130,13 @@ class WaterNotifier extends FamilyNotifier<int, String> {
     await ref.read(diaryRepoProvider).setWaterMl(arg, state);
     ref.read(syncEngineProvider.notifier).scheduleSync();
   }
+
+  /// Set the plain-water tally to an exact amount (the editable total).
+  Future<void> set(int ml) async {
+    state = ml.clamp(0, 10000);
+    await ref.read(diaryRepoProvider).setWaterMl(arg, state);
+    ref.read(syncEngineProvider.notifier).scheduleSync();
+  }
 }
 
 final waterProvider =

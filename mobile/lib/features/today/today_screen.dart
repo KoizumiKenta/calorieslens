@@ -9,6 +9,7 @@ import '../../core/data/repositories.dart';
 import '../../core/models/diary_entry.dart';
 import '../../core/models/favorite.dart';
 import '../../core/state/providers.dart';
+import '../../core/widgets/precise_field.dart';
 import '../diary/edit_entry_sheet.dart';
 
 class TodayScreen extends ConsumerWidget {
@@ -171,6 +172,7 @@ class TodayScreen extends ConsumerWidget {
             targetMl: profile.waterTargetMl,
             onAdjust: (delta) =>
                 ref.read(waterProvider(dateKey).notifier).adjust(delta),
+            onSet: (ml) => ref.read(waterProvider(dateKey).notifier).set(ml),
           ),
           const SizedBox(height: 20),
 
@@ -332,12 +334,14 @@ class _WaterCard extends ConsumerWidget {
     required this.drinksMl,
     required this.targetMl,
     required this.onAdjust,
+    required this.onSet,
   });
 
   final int waterMl;
   final double drinksMl;
   final double targetMl;
   final void Function(int deltaMl) onAdjust;
+  final void Function(int ml) onSet;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -373,7 +377,14 @@ class _WaterCard extends ConsumerWidget {
                   visualDensity: VisualDensity.compact,
                   onPressed: waterMl <= 0 ? null : () => onAdjust(-250),
                   icon: const Icon(Icons.remove),
-                  tooltip: 'Undo 250 ml',
+                  tooltip: 'Quick −250 ml',
+                ),
+                const SizedBox(width: 6),
+                IconButton.filledTonal(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _editWater(context),
+                  icon: const Icon(Icons.edit_outlined),
+                  tooltip: 'Edit exact amount',
                 ),
               ],
             ),
@@ -428,13 +439,17 @@ class _WaterCard extends ConsumerWidget {
               backgroundColor: scheme.surfaceContainerHighest,
             ),
             const SizedBox(height: 8),
-            Text(
-              done
-                  ? 'Target hit — ${(totalMl / 1000).toStringAsFixed(2)} L today. Well hydrated! 🎉'
-                  : '${(totalMl / 1000).toStringAsFixed(2)} of ${(targetMl / 1000).toStringAsFixed(1)} L · ${(progress * 100).round()}% — about $glassesLeft glass${glassesLeft == 1 ? '' : 'es'} to go',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: done ? scheme.onTertiaryContainer : scheme.onSurfaceVariant,
-                fontWeight: done ? FontWeight.w600 : null,
+            GestureDetector(
+              onTap: () => _editWater(context),
+              child: Text(
+                done
+                    ? 'Target hit — ${(totalMl / 1000).toStringAsFixed(2)} L today. Well hydrated! 🎉'
+                    : '${(totalMl / 1000).toStringAsFixed(2)} of ${(targetMl / 1000).toStringAsFixed(1)} L · ${(progress * 100).round()}% — about $glassesLeft glass${glassesLeft == 1 ? '' : 'es'} to go',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color:
+                      done ? scheme.onTertiaryContainer : scheme.onSurfaceVariant,
+                  fontWeight: done ? FontWeight.w600 : null,
+                ),
               ),
             ),
             if (drinksMl > 0)
@@ -521,6 +536,48 @@ class _WaterCard extends ConsumerWidget {
     if (confirmed == true) {
       await ref.read(vesselsProvider.notifier).removeAt(index);
     }
+  }
+
+  /// Edit the plain-water tally to an exact amount — type it or step by 50 ml.
+  /// Covers add, deduct, and correction in one place (replaces the rigid
+  /// fixed-step deduct).
+  Future<void> _editWater(BuildContext context) async {
+    var value = waterMl.toDouble();
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('💧 Plain water today'),
+        content: StatefulBuilder(
+          builder: (ctx, setLocal) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Set the exact amount of plain water. Drinks from your diary are counted separately.',
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              PreciseField(
+                label: 'Water',
+                value: value,
+                min: 0,
+                max: 6000,
+                step: 50,
+                unit: 'ml',
+                onChanged: (v) => setLocal(() => value = v),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, value.round()),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    if (result != null) onSet(result);
   }
 
   void _showInfo(BuildContext context) {
