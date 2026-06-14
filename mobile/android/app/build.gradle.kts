@@ -43,3 +43,10 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Bundle the ML Kit barcode model into the APK so scanning works without
+    // a Google Play Services model download (fails on some MIUI/Xiaomi and
+    // Play-Services-less devices → null model → genericError NPE).
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+}
