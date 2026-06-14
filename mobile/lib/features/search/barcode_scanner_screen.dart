@@ -27,16 +27,14 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
   );
   bool _handled = false;
 
-  @override
-  void initState() {
-    super.initState();
-    // With a user-provided controller, mobile_scanner v5 does not auto-start.
-    unawaited(_controller.start());
-  }
+  // mobile_scanner v7: the MobileScanner widget auto-starts the controller
+  // (autoStart defaults to true). Calling start() ourselves double-starts it,
+  // which races and surfaces as MobileScannerErrorCode.genericError (a null
+  // object NPE) on some devices. So no manual start() here.
 
   @override
   void dispose() {
-    _controller.dispose();
+    unawaited(_controller.dispose());
     super.dispose();
   }
 
