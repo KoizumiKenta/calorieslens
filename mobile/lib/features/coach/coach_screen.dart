@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/data/coach_api.dart';
 import '../../core/data/repositories.dart';
 import '../../core/state/providers.dart';
 
@@ -40,19 +41,59 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
     if (text.isEmpty || _typing) return;
     _controller.clear();
 
+    // Recent turns for context (exclude the message we just added).
+    final history = _messages
+        .map((m) => (role: m.fromUser ? 'user' : 'coach', text: m.text))
+        .toList();
+
     setState(() {
       _messages.add(_Message(text, fromUser: true));
       _typing = true;
     });
     _scrollDown();
 
-    await Future<void>.delayed(const Duration(milliseconds: 900));
+    // Cloud coach first (real LLM, any question); fall back to the on-device
+    // rule coach when offline / unreachable so the screen always answers.
+    String reply;
+    try {
+      reply = await CoachApi.reply(
+        text,
+        _buildContext(),
+        history: history.length > 6 ? history.sublist(history.length - 6) : history,
+      );
+    } catch (_) {
+      reply = _replyTo(text);
+    }
+
     if (!mounted) return;
     setState(() {
-      _messages.add(_Message(_replyTo(text), fromUser: false));
+      _messages.add(_Message(reply, fromUser: false));
       _typing = false;
     });
     _scrollDown();
+  }
+
+  /// Compact, number-grounded snapshot the backend feeds to the model.
+  String _buildContext() {
+    final profile = ref.read(profileProvider);
+    if (profile == null) return 'Profile not set up yet.';
+    final dateKey = dateKeyOf(DateTime.now());
+    final totals = ref.read(dayTotalsProvider(dateKey));
+    final water = ref.read(waterProvider(dateKey));
+    final logs = ref.read(weightLogProvider);
+
+    final parts = <String>[
+      'Goal: ${profile.goal.name}.',
+      'Today: ${totals.kcal.round()}/${profile.kcalTarget.round()} kcal '
+          '(${(profile.kcalTarget - totals.kcal).round()} left).',
+      'Protein ${totals.proteinG.round()}/${profile.proteinTargetG.round()} g, '
+          'carbs ${totals.carbsG.round()} g, fat ${totals.fatG.round()} g.',
+      'Water ${(water / 1000).toStringAsFixed(2)}/${(profile.waterTargetMl / 1000).toStringAsFixed(1)} L.',
+    ];
+    if (logs.length >= 2) {
+      parts.add('Weight ${logs.first.$2.toStringAsFixed(1)}→${logs.last.$2.toStringAsFixed(1)} kg.');
+    }
+    return parts.join(' ');
   }
 
   void _scrollDown() {
@@ -124,8 +165,9 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
           '(${delta >= 0 ? '+' : ''}${delta.toStringAsFixed(1)} kg). '
           '${profile.goal.name == 'lose' && delta < 0 ? 'Right direction — steady beats fast. 📉' : 'Remember daily fluctuation of ±1 kg is water, not fat. Watch the weekly average.'}';
     }
-    return 'I can help with what to eat next, how today is tracking, protein gaps, water, or your weight trend. '
-        'Try one of the suggestions below — and once the cloud coach is connected I\'ll handle anything nutrition-related.';
+    return 'I\'m offline right now, so I can only answer the basics from your diary — '
+        'what to eat next, how today is tracking, protein gaps, water, or your weight trend. '
+        'Reconnect and I can handle any nutrition question.';
   }
 
   @override

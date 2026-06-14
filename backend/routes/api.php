@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\CoachController;
 use App\Http\Controllers\Api\V1\FoodController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ScanController;
@@ -25,6 +26,11 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['app.token', 'throttle:30,1'])->group(function () {
         Route::post('scans/analyze', [ScanController::class, 'analyze']);
         Route::post('scans/refine', [ScanController::class, 'refine']);
+    });
+
+    // AI nutrition coach — app-token gated (shared Gemini quota).
+    Route::middleware(['app.token', 'throttle:20,1'])->group(function () {
+        Route::post('coach/messages', [CoachController::class, 'messages']);
     });
 
     Route::middleware('auth:sanctum')->group(function () {
