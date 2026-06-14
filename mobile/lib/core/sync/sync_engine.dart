@@ -6,8 +6,10 @@ import 'package:http/http.dart' as http;
 
 import '../api/api_config.dart';
 import '../auth/auth_repository.dart';
+import '../data/favorites_repository.dart';
 import '../data/repositories.dart';
 import '../models/diary_entry.dart';
+import '../models/favorite.dart';
 import '../models/user_profile.dart';
 import '../state/providers.dart';
 
@@ -66,13 +68,14 @@ class SyncEngine extends Notifier<SyncState> {
 
     state = state.copyWith(syncing: true, clearError: true);
     final diary = ref.read(diaryRepoProvider);
+    final favorites = ref.read(favoritesRepoProvider);
     final profileRepo = ref.read(profileRepoProvider);
 
     try {
       await _pushProfile(token, profileRepo);
-      await _pushChanges(token, diary);
+      await _pushChanges(token, diary, favorites);
       // First sync pulls the full set; afterwards only what changed.
-      await _pullAndApply(token, diary, profileRepo,
+      await _pullAndApply(token, diary, favorites, profileRepo,
           since: initial ? null : state.lastSyncedAt);
 
       _invalidateUi();
@@ -92,11 +95,15 @@ class SyncEngine extends Notifier<SyncState> {
         .timeout(const Duration(seconds: 20));
   }
 
-  Future<void> _pushChanges(String token, DiaryRepository diary) async {
+  Future<void> _pushChanges(
+      String token, DiaryRepository diary, FavoritesRepository favorites) async {
     final deletions = diary.pendingDeletions().toList();
+    final favDeletions = favorites.pendingDeletions().toList();
     final body = {
       'diary_entries': diary.allEntries().map((e) => e.toJson()).toList(),
       'deleted_ids': deletions,
+      'favorites': favorites.allForSync().map((f) => f.toJson()).toList(),
+      'deleted_favorite_ids': favDeletions,
       'water': diary.allWater().map((w) => {'date_key': w.$1, 'ml': w.$2}).toList(),
       'weights':
           diary.weightLogs().map((w) => {'date_key': w.$1, 'kg': w.$2}).toList(),
@@ -107,6 +114,7 @@ class SyncEngine extends Notifier<SyncState> {
         .timeout(const Duration(seconds: 30));
     if (res.statusCode == 200) {
       await diary.clearDeletions(deletions);
+      await favorites.clearDeletions(favDeletions);
     } else {
       throw Exception('push failed (${res.statusCode})');
     }
@@ -115,6 +123,7 @@ class SyncEngine extends Notifier<SyncState> {
   Future<void> _pullAndApply(
     String token,
     DiaryRepository diary,
+    FavoritesRepository favorites,
     ProfileRepository profileRepo, {
     DateTime? since,
   }) async {
@@ -143,6 +152,15 @@ class SyncEngine extends Notifier<SyncState> {
       }
     }
 
+    for (final raw in (json['favorites'] as List? ?? const [])) {
+      final f = raw as Map<String, dynamic>;
+      if (f['deleted'] == true) {
+        await favorites.applyRemoteDeletion(f['id'] as String);
+      } else {
+        await favorites.upsert(Favorite.fromJson(f));
+      }
+    }
+
     for (final raw in (json['water'] as List? ?? const [])) {
       final w = raw as Map<String, dynamic>;
       await diary.setWaterMl(w['date_key'] as String, (w['ml'] as num).toInt());
@@ -165,6 +183,7 @@ class SyncEngine extends Notifier<SyncState> {
     ref.invalidate(waterProvider);
     ref.invalidate(weightLogProvider);
     ref.invalidate(profileProvider);
+    ref.invalidate(favoritesProvider);
   }
 
   String _short(Object e) {

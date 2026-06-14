@@ -323,6 +323,21 @@ class _LogFoodSheetState extends ConsumerState<_LogFoodSheet> {
                       style: theme.textTheme.titleLarge
                           ?.copyWith(fontWeight: FontWeight.w700)),
                 ),
+                Builder(builder: (context) {
+                  final isFav = ref
+                      .watch(favoritesProvider)
+                      .any((f) =>
+                          f.foodName.toLowerCase() ==
+                          widget.food.name.toLowerCase());
+                  return IconButton(
+                    tooltip: isFav ? 'Remove favorite' : 'Save to favorites',
+                    icon: Icon(isFav ? Icons.star : Icons.star_border,
+                        color: isFav ? Colors.amber : null),
+                    onPressed: () => ref
+                        .read(favoritesProvider.notifier)
+                        .toggleFood(widget.food),
+                  );
+                }),
               ],
             ),
             const SizedBox(height: 16),

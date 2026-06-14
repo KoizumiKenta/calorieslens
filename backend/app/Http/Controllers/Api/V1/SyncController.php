@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\DiaryEntry;
+use App\Models\Favorite;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -34,9 +35,18 @@ class SyncController extends Controller
             return $e->toClientArray() + ['deleted' => $e->trashed()];
         });
 
+        $favQuery = $user->favorites()->withTrashed();
+        if ($sinceTs) {
+            $favQuery->where('updated_at', '>', $sinceTs);
+        }
+        $favorites = $favQuery->get()->map(function (Favorite $f) {
+            return $f->toClientArray() + ['deleted' => $f->trashed()];
+        });
+
         return response()->json([
             'profile' => $user->profile,
             'diary_entries' => $entries,
+            'favorites' => $favorites,
             'water' => $user->waterLogs()->get(['date_key', 'ml']),
             'weights' => $user->weightLogs()->get(['date_key', 'kg']),
             'server_time' => now()->toIso8601String(),
@@ -61,6 +71,17 @@ class SyncController extends Controller
             'diary_entries.*.logged_at' => ['nullable', 'date'],
             'deleted_ids' => ['array'],
             'deleted_ids.*' => ['uuid'],
+            'favorites' => ['array'],
+            'favorites.*.id' => ['required', 'uuid'],
+            'favorites.*.food_name' => ['required', 'string', 'max:200'],
+            'favorites.*.emoji' => ['nullable', 'string', 'max:16'],
+            'favorites.*.default_grams' => ['nullable', 'numeric'],
+            'favorites.*.portion_label' => ['nullable', 'string', 'max:100'],
+            'favorites.*.per_100g' => ['required', 'array'],
+            'favorites.*.hydration_factor' => ['nullable', 'numeric'],
+            'favorites.*.source' => ['nullable', 'string', 'max:20'],
+            'deleted_favorite_ids' => ['array'],
+            'deleted_favorite_ids.*' => ['uuid'],
             'water' => ['array'],
             'water.*.date_key' => ['required', 'string', 'max:10'],
             'water.*.ml' => ['required', 'integer', 'min:0'],
@@ -100,6 +121,33 @@ class SyncController extends Controller
 
             if (! empty($data['deleted_ids'])) {
                 $user->diaryEntries()->whereIn('id', $data['deleted_ids'])->delete();
+            }
+
+            foreach ($data['favorites'] ?? [] as $f) {
+                $n = $f['per_100g'];
+                $user->favorites()->updateOrCreate(
+                    ['id' => $f['id']],
+                    [
+                        'food_name' => $f['food_name'],
+                        'emoji' => $f['emoji'] ?? '🍽️',
+                        'default_grams' => $f['default_grams'] ?? 100,
+                        'portion_label' => $f['portion_label'] ?? null,
+                        'kcal' => $n['kcal'] ?? 0,
+                        'protein_g' => $n['protein_g'] ?? 0,
+                        'carbs_g' => $n['carbs_g'] ?? 0,
+                        'fat_g' => $n['fat_g'] ?? 0,
+                        'fiber_g' => $n['fiber_g'] ?? 0,
+                        'sugar_g' => $n['sugar_g'] ?? 0,
+                        'sodium_mg' => $n['sodium_mg'] ?? 0,
+                        'hydration_factor' => $f['hydration_factor'] ?? null,
+                        'source' => $f['source'] ?? 'search',
+                        'deleted_at' => null,
+                    ],
+                );
+            }
+
+            if (! empty($data['deleted_favorite_ids'])) {
+                $user->favorites()->whereIn('id', $data['deleted_favorite_ids'])->delete();
             }
 
             foreach ($data['water'] ?? [] as $w) {

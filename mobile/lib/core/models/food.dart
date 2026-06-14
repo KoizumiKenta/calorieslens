@@ -11,6 +11,8 @@ class Portion {
         label: j['label'] as String,
         grams: (j['grams'] as num).toDouble(),
       );
+
+  Map<String, dynamic> toJson() => {'label': label, 'grams': grams};
 }
 
 /// An entry in the food database. [per100g] is the canonical basis;
@@ -71,4 +73,16 @@ class Food {
             .toList(),
         hydrationFactor: (j['hydration_factor'] as num?)?.toDouble(),
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'brand': brand,
+        'region': region,
+        'emoji': emoji,
+        'per_100g': per100g.toJson(),
+        'portions': portions.map((p) => p.toJson()).toList(),
+        'aliases': aliases,
+        'hydration_factor': hydrationFactor,
+      };
 }

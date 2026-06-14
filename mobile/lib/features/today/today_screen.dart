@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/data/repositories.dart';
 import '../../core/models/diary_entry.dart';
+import '../../core/models/favorite.dart';
 import '../../core/state/providers.dart';
 import '../diary/edit_entry_sheet.dart';
 
@@ -159,6 +160,9 @@ class TodayScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 12),
+
+          // ── Quick add (favorites + recents) ─────────────────────
+          const _QuickAddSection(),
 
           // ── Water ───────────────────────────────────────────────
           _WaterCard(
@@ -589,6 +593,95 @@ class _StreakChip extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// One-tap re-logging: starred foods first, then recently logged ones.
+/// Tapping logs the food's default portion to the time-appropriate meal.
+class _QuickAddSection extends ConsumerWidget {
+  const _QuickAddSection();
+
+  static Meal _mealForNow() {
+    final h = DateTime.now().hour;
+    if (h < 11) return Meal.breakfast;
+    if (h < 15) return Meal.lunch;
+    if (h < 21) return Meal.dinner;
+    return Meal.snack;
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final favorites = ref.watch(favoritesProvider);
+    final recents = ref.watch(recentFoodsProvider);
+    if (favorites.isEmpty && recents.isEmpty) return const SizedBox.shrink();
+
+    final dateKey = dateKeyOf(DateTime.now());
+
+    Future<void> log(Favorite f) async {
+      final meal = _mealForNow();
+      await ref.read(diaryProvider(dateKey).notifier).add(f.toEntry(meal, dateKey));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${f.foodName} → ${meal.label} ✅')),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (favorites.isNotEmpty) ...[
+          _label(context, '⭐ Favorites'),
+          _chipRow(
+            favorites
+                .map((f) => _chip(context, f,
+                    onTap: () => log(f),
+                    onLongPress: () =>
+                        ref.read(favoritesProvider.notifier).removeByName(f.foodName)))
+                .toList(),
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (recents.isNotEmpty) ...[
+          _label(context, 'Recent'),
+          _chipRow(
+            recents.map((f) => _chip(context, f, onTap: () => log(f))).toList(),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
+  Widget _label(BuildContext context, String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(text,
+            style: Theme.of(context)
+                .textTheme
+                .titleSmall
+                ?.copyWith(fontWeight: FontWeight.w700)),
+      );
+
+  Widget _chipRow(List<Widget> chips) => SizedBox(
+        height: 40,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: chips.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) => chips[i],
+        ),
+      );
+
+  Widget _chip(BuildContext context, Favorite f,
+      {required VoidCallback onTap, VoidCallback? onLongPress}) {
+    final chip = ActionChip(
+      avatar: Text(f.emoji),
+      label: Text(f.foodName),
+      onPressed: onTap,
+      tooltip:
+          onLongPress != null ? 'Tap to log · long-press to remove' : 'Tap to log',
+    );
+    if (onLongPress == null) return chip;
+    return GestureDetector(onLongPress: onLongPress, child: chip);
   }
 }
 

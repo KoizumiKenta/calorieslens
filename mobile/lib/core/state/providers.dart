@@ -1,10 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/favorites_repository.dart';
 import '../data/live_scan_service.dart';
 import '../data/repositories.dart';
 import '../data/scan_service.dart';
 import '../models/diary_entry.dart';
+import '../models/favorite.dart';
+import '../models/food.dart';
 import '../models/nutrition_facts.dart';
 import '../models/user_profile.dart';
 import '../sync/sync_engine.dart';
@@ -19,6 +22,9 @@ final profileRepoProvider =
 
 final diaryRepoProvider =
     Provider((ref) => DiaryRepository(ref.watch(sharedPrefsProvider)));
+
+final favoritesRepoProvider =
+    Provider((ref) => FavoritesRepository(ref.watch(sharedPrefsProvider)));
 
 /// Real AI via /api/analyze (webapi/server.php → Claude vision); the mock
 /// is the visible fallback when the live path is unavailable.
@@ -175,3 +181,68 @@ class WeightLogNotifier extends Notifier<List<(String, double)>> {
 final weightLogProvider =
     NotifierProvider<WeightLogNotifier, List<(String, double)>>(
         WeightLogNotifier.new);
+
+// ── Favorites (starred foods, synced) ─────────────────────────────────
+class FavoritesNotifier extends Notifier<List<Favorite>> {
+  @override
+  List<Favorite> build() => ref.read(favoritesRepoProvider).all();
+
+  bool isFavorite(String foodName) =>
+      ref.read(favoritesRepoProvider).isFavorite(foodName);
+
+  Future<void> addFood(Food food) async {
+    await ref.read(favoritesRepoProvider).add(Favorite.fromFood(food));
+    _refresh();
+  }
+
+  Future<void> addEntry(DiaryEntry entry) async {
+    await ref.read(favoritesRepoProvider).add(Favorite.fromEntry(entry));
+    _refresh();
+  }
+
+  Future<void> removeByName(String foodName) async {
+    await ref.read(favoritesRepoProvider).removeByName(foodName);
+    _refresh();
+  }
+
+  /// Toggle by food name; needs the source data when turning ON.
+  Future<void> toggleFood(Food food) async {
+    if (isFavorite(food.name)) {
+      await removeByName(food.name);
+    } else {
+      await addFood(food);
+    }
+  }
+
+  void _refresh() {
+    state = ref.read(favoritesRepoProvider).all();
+    ref.read(syncEngineProvider.notifier).scheduleSync();
+  }
+}
+
+final favoritesProvider =
+    NotifierProvider<FavoritesNotifier, List<Favorite>>(FavoritesNotifier.new);
+
+/// Recently logged distinct foods (most recent first), as re-loggable favorites.
+/// Derived from the diary — no separate storage. Excludes anything already
+/// starred so the two quick-add rows don't duplicate.
+final recentFoodsProvider = Provider<List<Favorite>>((ref) {
+  // Recompute when today's diary or the favorites set changes.
+  ref.watch(diaryProvider(dateKeyOf(DateTime.now())));
+  final favs = ref.watch(favoritesProvider);
+  final favNames = favs.map((f) => f.foodName.toLowerCase()).toSet();
+
+  final entries = ref.read(diaryRepoProvider).allEntries()
+    ..sort((a, b) => b.loggedAt.compareTo(a.loggedAt));
+
+  final seen = <String>{};
+  final out = <Favorite>[];
+  for (final e in entries) {
+    final key = e.foodName.toLowerCase();
+    if (seen.contains(key) || favNames.contains(key)) continue;
+    seen.add(key);
+    out.add(Favorite.fromEntry(e));
+    if (out.length >= 8) break;
+  }
+  return out;
+});
