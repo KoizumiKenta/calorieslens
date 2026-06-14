@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -24,6 +26,13 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
     ],
   );
   bool _handled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // With a user-provided controller, mobile_scanner v5 does not auto-start.
+    unawaited(_controller.start());
+  }
 
   @override
   void dispose() {
@@ -63,7 +72,45 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
       body: Stack(
         alignment: Alignment.center,
         children: [
-          MobileScanner(controller: _controller, onDetect: _onDetect),
+          MobileScanner(
+            controller: _controller,
+            onDetect: _onDetect,
+            errorBuilder: (context, error, child) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.no_photography,
+                          color: Colors.white70, size: 40),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Camera unavailable',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${error.errorCode}\n${error.errorDetails?.message ?? ''}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: () => Navigator.pop(
+                            context, BarcodeScannerScreen.manualSentinel),
+                        icon: const Icon(Icons.keyboard),
+                        label: const Text('Type barcode instead'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
           // Simple framing guide.
           Container(
             width: 260,
