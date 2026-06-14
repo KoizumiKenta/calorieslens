@@ -19,6 +19,8 @@ Route::prefix('v1')->group(function () {
 
     // Food search is public (anyone can search before signing in) but rate-limited.
     Route::middleware('throttle:60,1')->get('foods/search', [FoodController::class, 'index']);
+    // Barcode lookup (Open Food Facts), public + rate-limited.
+    Route::middleware('throttle:60,1')->get('foods/barcode/{code}', [FoodController::class, 'barcode']);
     // AI estimate costs provider quota — tighter limit.
     Route::middleware('throttle:20,1')->post('foods/estimate', [FoodController::class, 'estimate']);
 

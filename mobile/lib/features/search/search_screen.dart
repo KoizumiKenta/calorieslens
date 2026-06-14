@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import 'barcode_scanner_screen.dart';
 import '../../core/data/food_search_api.dart';
 import '../../core/data/repositories.dart';
 import '../../core/models/diary_entry.dart';
@@ -30,6 +32,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   bool _loading = false;
   bool _offline = false;
   bool _estimating = false;
+  bool _lookingUp = false;
 
   @override
   void initState() {
@@ -110,7 +113,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Add food')),
+      appBar: AppBar(
+        title: const Text('Add food'),
+        actions: [
+          IconButton(
+            icon: _lookingUp
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.qr_code_scanner),
+            tooltip: 'Scan barcode',
+            onPressed: _lookingUp ? null : _scanOrEnterBarcode,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -209,6 +226,72 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ],
       ),
     );
+  }
+
+  /// Barcode entry. On a phone, opens the camera scanner (with a "type
+  /// instead" escape hatch); on web, goes straight to manual entry. Either way
+  /// the resulting code is looked up via Open Food Facts.
+  Future<void> _scanOrEnterBarcode() async {
+    String? code;
+    if (kIsWeb) {
+      code = await _promptManualBarcode();
+    } else {
+      final scanned = await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
+      );
+      if (scanned == BarcodeScannerScreen.manualSentinel) {
+        if (!mounted) return;
+        code = await _promptManualBarcode();
+      } else {
+        code = scanned;
+      }
+    }
+    if (code == null || code.trim().isEmpty) return;
+    await _lookupBarcode(code);
+  }
+
+  Future<String?> _promptManualBarcode() async {
+    final ctrl = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter barcode'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            hintText: 'e.g. 3017620422003',
+            helperText: 'Type the digits under the barcode',
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text),
+              child: const Text('Look up')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return code;
+  }
+
+  Future<void> _lookupBarcode(String code) async {
+    setState(() => _lookingUp = true);
+    final result = await ref.read(foodSearchApiProvider).barcode(code);
+    if (!mounted) return;
+    setState(() => _lookingUp = false);
+
+    if (result.food != null) {
+      _openPortionSheet(result.food!);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? 'No product found.')),
+      );
+    }
   }
 
   Future<void> _openPortionSheet(Food food) async {

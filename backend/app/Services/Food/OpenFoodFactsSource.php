@@ -48,6 +48,27 @@ class OpenFoodFactsSource
         return $rows;
     }
 
+    /** Look up a single product by barcode (EAN/UPC). Null if unknown. */
+    public function lookupByBarcode(string $code): ?array
+    {
+        try {
+            $res = Http::timeout(6)
+                ->withHeaders(['User-Agent' => 'CalorieLens/0.1 (dev)'])
+                ->get("https://world.openfoodfacts.org/api/v2/product/{$code}.json", [
+                    'fields' => 'code,product_name,brands,nutriments,serving_size,countries_tags',
+                ]);
+            if (! $res->ok() || (int) $res->json('status') !== 1) {
+                return null;
+            }
+            $p = $res->json('product') ?? [];
+            $p['code'] = $code; // ensure normalize() has the barcode
+            return $this->normalize($p);
+        } catch (\Throwable $e) {
+            Log::warning('OFF barcode lookup failed', ['code' => $code, 'e' => $e->getMessage()]);
+            return null;
+        }
+    }
+
     private function normalize(array $p): ?array
     {
         $name = trim((string) ($p['product_name'] ?? ''));

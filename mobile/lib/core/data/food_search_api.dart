@@ -42,6 +42,25 @@ class FoodSearchApi {
     }
   }
 
+  /// Barcode (EAN/UPC) lookup via the backend (Open Food Facts). Returns the
+  /// matched [Food], or an error message (e.g. not found → offer custom food).
+  /// Requires the backend — there's no offline barcode database.
+  Future<({Food? food, String? error})> barcode(String code) async {
+    final clean = code.replaceAll(RegExp(r'\D'), '');
+    try {
+      final res = await http
+          .get(ApiConfig.uri('foods/barcode/$clean'), headers: ApiConfig.headers())
+          .timeout(const Duration(seconds: 15));
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode == 200) {
+        return (food: Food.fromJson(body['food'] as Map<String, dynamic>), error: null);
+      }
+      return (food: null, error: (body['message'] ?? 'Lookup failed.').toString());
+    } catch (_) {
+      return (food: null, error: "Couldn't reach the server. Check your connection.");
+    }
+  }
+
   /// "Estimate any dish with AI" — for local foods (ban mee, loh mee…) no
   /// database carries. Returns the estimated [Food], or null on failure.
   /// Requires the backend (no offline equivalent — it needs the model).
