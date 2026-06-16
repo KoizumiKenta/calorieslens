@@ -358,7 +358,9 @@ class _LogFoodSheetState extends ConsumerState<_LogFoodSheet> {
 
   Future<void> _log() async {
     final now = DateTime.now();
-    final dateKey = dateKeyOf(now);
+    // Log to whichever day the diary is showing (today by default, but
+    // tomorrow/another day when the user navigated there to meal-prep).
+    final dateKey = dateKeyOf(ref.read(selectedDateProvider));
     final portionLabel = widget.food.portions.isEmpty
         ? '${_grams.round()} g'
         : '${_multiplier == 1.0 ? '' : '${_fmtMultiplier(_multiplier)} × '}${widget.food.portions[_portionIndex].label}';

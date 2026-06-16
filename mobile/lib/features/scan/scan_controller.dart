@@ -125,7 +125,9 @@ class ScanController extends Notifier<ScanState> {
     final analysis = state.analysis;
     if (analysis == null) return 0;
     final now = DateTime.now();
-    final dateKey = dateKeyOf(now);
+    // Respect the diary's selected day so scans can be logged for tomorrow's
+    // meal prep, not just today.
+    final dateKey = dateKeyOf(ref.read(selectedDateProvider));
 
     final entries = [
       for (final item in analysis.activeItems)

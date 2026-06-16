@@ -85,13 +85,13 @@ class _AppShell extends StatelessWidget {
 
 /// Custom 5-slot bottom bar: four tab branches with a contained "Scan" button
 /// in the middle that routes to /scan without floating over anything.
-class _BottomBar extends StatelessWidget {
+class _BottomBar extends ConsumerWidget {
   const _BottomBar({required this.shell});
 
   final StatefulNavigationShell shell;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
       elevation: 3,
@@ -102,11 +102,11 @@ class _BottomBar extends StatelessWidget {
           height: 66,
           child: Row(
             children: [
-              _tab(context, 0, Icons.home_outlined, Icons.home, 'Today'),
-              _tab(context, 1, Icons.book_outlined, Icons.book, 'Diary'),
+              _tab(context, ref, 0, Icons.home_outlined, Icons.home, 'Today'),
+              _tab(context, ref, 1, Icons.book_outlined, Icons.book, 'Diary'),
               _scanButton(context),
-              _tab(context, 2, Icons.chat_bubble_outline, Icons.chat_bubble, 'Coach'),
-              _tab(context, 3, Icons.person_outline, Icons.person, 'Profile'),
+              _tab(context, ref, 2, Icons.chat_bubble_outline, Icons.chat_bubble, 'Coach'),
+              _tab(context, ref, 3, Icons.person_outline, Icons.person, 'Profile'),
             ],
           ),
         ),
@@ -114,15 +114,21 @@ class _BottomBar extends StatelessWidget {
     );
   }
 
-  Widget _tab(BuildContext context, int branch, IconData icon, IconData active,
-      String label) {
+  Widget _tab(BuildContext context, WidgetRef ref, int branch, IconData icon,
+      IconData active, String label) {
     final scheme = Theme.of(context).colorScheme;
     final selected = shell.currentIndex == branch;
     final color = selected ? scheme.primary : scheme.onSurfaceVariant;
     return Expanded(
       child: InkWell(
-        onTap: () =>
-            shell.goBranch(branch, initialLocation: branch == shell.currentIndex),
+        onTap: () {
+          // Leaving for the Today tab resets the diary's selected day so a
+          // "tomorrow" planning session doesn't silently misfile later logs.
+          if (branch == 0) {
+            ref.read(selectedDateProvider.notifier).state = DateTime.now();
+          }
+          shell.goBranch(branch, initialLocation: branch == shell.currentIndex);
+        },
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [

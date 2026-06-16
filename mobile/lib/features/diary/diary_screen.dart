@@ -20,7 +20,14 @@ class DiaryScreen extends ConsumerWidget {
     final profile = ref.watch(profileProvider);
     final scheme = Theme.of(context).colorScheme;
 
-    final isToday = dateKey == dateKeyOf(DateTime.now());
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final isToday = dateKey == dateKeyOf(now);
+    final isTomorrow = dateKey == dateKeyOf(today.add(const Duration(days: 1)));
+    // Cap forward planning at a week out — enough for meal prep, no infinite
+    // wandering into the far future.
+    final atForwardLimit = !date
+        .isBefore(today.add(const Duration(days: 7)));
 
     return Scaffold(
       appBar: AppBar(
@@ -52,7 +59,9 @@ class DiaryScreen extends ConsumerWidget {
                   child: Text(
                     isToday
                         ? 'Today'
-                        : DateFormat('EEE, d MMM yyyy').format(date),
+                        : isTomorrow
+                            ? 'Tomorrow'
+                            : DateFormat('EEE, d MMM yyyy').format(date),
                     textAlign: TextAlign.center,
                     style: Theme.of(context)
                         .textTheme
@@ -61,7 +70,7 @@ class DiaryScreen extends ConsumerWidget {
                   ),
                 ),
                 IconButton(
-                  onPressed: isToday
+                  onPressed: atForwardLimit
                       ? null
                       : () => ref
                           .read(selectedDateProvider.notifier)
