@@ -135,11 +135,35 @@ class DiaryScreen extends ConsumerWidget {
                           subtitle: mealEntries.isEmpty
                               ? const Text('Nothing logged')
                               : Text('${mealKcal.round()} kcal'),
-                          trailing: IconButton.filledTonal(
-                            icon: const Icon(Icons.add),
+                          trailing: PopupMenuButton<String>(
                             tooltip: 'Add to ${meal.label}',
-                            onPressed: () =>
-                                context.push('/search?meal=${meal.name}'),
+                            icon: CircleAvatar(
+                              radius: 18,
+                              backgroundColor: scheme.secondaryContainer,
+                              foregroundColor: scheme.onSecondaryContainer,
+                              child: const Icon(Icons.add),
+                            ),
+                            onSelected: (choice) => choice == 'scan'
+                                ? context.push('/scan')
+                                : context.push('/search?meal=${meal.name}'),
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'search',
+                                child: ListTile(
+                                  leading: Icon(Icons.search),
+                                  title: Text('Search food'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'scan',
+                                child: ListTile(
+                                  leading: Icon(Icons.camera_alt_outlined),
+                                  title: Text('Scan photo'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         ...mealEntries.map(
